@@ -1,11 +1,5 @@
 grammar Expr;
-SLASH : '/';
-STAR : '*';
-PLUS : '+';
-MINUS : '-';
-OBRACKET : '(';
-CBRACKET : ')';
-NUMBER : '[1-9][0-9]*';
-e : t | e PLUS t | e MINUS f;
-t : f | t STAR f | e SLASH f;
-f : OBRACKET e CBRACKET | NUMBER;
+start : c c;
+c : C c | D;
+D : "d";
+C : "c";

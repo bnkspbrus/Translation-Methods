@@ -4,15 +4,7 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.function.Function;
+import java.util.*;
 import java.util.stream.Collectors;
 
 public class TableGenerator implements Generator {
@@ -21,93 +13,28 @@ public class TableGenerator implements Generator {
         SHIFT, REDUCE
     }
 
-    private record Item(ParserUtils.Production production, int position, Set<String> lookAhead) {
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o)
-                return true;
-            if (o == null || getClass() != o.getClass())
-                return false;
-            Item item = (Item) o;
-            return position == item.position && Objects.equals(production, item.production);
-        }
-
-        boolean merge(Item other) {
-            return lookAhead.addAll(other.lookAhead);
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(production, position);
-        }
-    }
-
-    private record IDState(State state, int id) {
-    }
-
-    private record State(Map<Item, Item> items) { // set<string> is lookAhead
-        @Override
-        public boolean equals(Object o) {
-            if (this == o)
-                return true;
-            if (o == null || getClass() != o.getClass())
-                return false;
-            State state = (State) o;
-            return Objects.equals(items.keySet(), state.items.keySet());
-        }
-
-        public boolean add(Item other) {
-            if (items.containsKey(other)) {
-                return items.get(other).merge(other);
-            }
-            items.put(other, other);
-            return true;
-        }
-
-        public boolean addAll(State other) {
-            boolean change = false;
-            for (Item item : other.items.values()) {
-                change |= add(item);
-            }
-            return change;
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(items.keySet());
-        }
-    }
-
-    private record Cell(Action action, int number) {
-        @Override
-        public String toString() {
-            return String.format("new Cell(Action.%s, %s)", action, number);
-        }
-    }
-
-    private record Row(IDState idState, Map<String, Cell> cells) {
-    }
-
     private Map<String, Set<String>> first;
     private Map<String, Set<List<String>>> sequences;
     private Map<ParserUtils.Production, Integer> productions;
 
-    private static final String ACTION_CLASS = """
+    private static final String ACTION_ENUM = """
             public enum Action {
                     SHIFT, REDUCE
             }""";
 
-    private static final String CELL_CLASS = """
+    private static final String CELL_RECORD = """
             public record Cell(Action action, int number) {
             }""";
+
 
     @Override
     public void generate(GrammaticsParser.GrammaticsContext ctx, Path genDir) throws IOException {
         productions = getProductions(ctx);
         first = ParserUtils.getFirst(productions.keySet());
         sequences = getSequences(ctx);
-        Map<State, Row> states = getStates();
+        Map<Set<Item>, StateInfo> states = getStates();
+        Map<Set<MergedItem>, StateInfo> merged = mergeStates(states);
+//        System.out.println(merged);
         Path outputFile = genDir.resolve(Path.of("Table.java"));
         List<String> tokens = ctx.ruleLexer()
                 .stream()
@@ -123,37 +50,223 @@ public class TableGenerator implements Generator {
         try (BufferedWriter writer = Files.newBufferedWriter(outputFile)) {
             String table = String.format("""
                             public class Table {
-                                public static final Cell[][] TABLE = new Cell[][] {
-                            //        %s
-                            %s
-                                };
-                            %s
                             %s
                             }""",
-                    getHeaders(tokens),
-                    states.values().stream()
-                            .sorted(Comparator.comparingInt(row -> row.idState().id))
-                            .map(row -> getTableRow(row, tokens))
-                            .collect(Collectors.joining(",\n")).indent(8),
-                    ACTION_CLASS.indent(4),
-                    CELL_CLASS.indent(4)
+                    String.join(
+                            System.lineSeparator(),
+                            getTable(merged, tokens),
+                            ACTION_ENUM,
+                            CELL_RECORD
+                    ).indent(4)
             );
             writer.write(table);
         }
     }
 
+    private String getTable(Map<Set<MergedItem>, StateInfo> merged, List<String> tokens) {
+        List<Set<MergedItem>> states = new ArrayList<>(Collections.nCopies(merged.size(), null));
+        for (var entry : merged.entrySet()) {
+            states.set(entry.getValue().id, entry.getKey());
+        }
+        return String.format("""
+                        public static final Cell[][] TABLE = new Cell[][] {
+                        //    %s
+                        %s
+                        };""",
+                getTableComment(tokens),
+                states.stream()
+                        .map(merged::get)
+                        .map(info -> getTableRow(info, tokens))
+                        .collect(Collectors.joining(",\n"))
+                        .indent(4)
+        );
+    }
+
+    private String getTableComment(List<String> tokens) {
+        return tokens.stream().map(token -> String.format("%27s", token)).collect(Collectors.joining(" "));
+    }
+
+    private String getTableRow(StateInfo info, List<String> tokens) {
+        return String.format("{ %s }", tokens.stream()
+                .map(token -> String.format("%27s", getCell(info.transitions.get(token))))
+                .collect(Collectors.joining(","))
+        );
+    }
+
+    private String getCell(ActionNumber actionNumber) {
+        if (actionNumber == null) {
+            return null;
+        }
+        return String.format("new Cell(Action.%s, %d)", actionNumber.action, actionNumber.number);
+    }
+
+    private record MergedItem(ParserUtils.Production production, int position) {
+        @Override
+        public boolean equals(Object o) {
+            if (this == o)
+                return true;
+            if (o == null || getClass() != o.getClass())
+                return false;
+            MergedItem that = (MergedItem) o;
+            return position == that.position && Objects.equals(production, that.production);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(production, position);
+        }
+    }
+
+    private record ActionNumber(Action action, int number) {
+    }
+
+    private record Item(ParserUtils.Production production, int position, String lookAhead) {
+    }
+
+    private record StateInfo(int id, Map<String, ActionNumber> transitions) {
+    }
+
+    private Map<Set<MergedItem>, StateInfo> mergeStates(Map<Set<Item>, StateInfo> states) {
+        List<Set<Item>> id2State = new ArrayList<>(Collections.nCopies(states.size(), null));
+        for (var entry : states.entrySet()) {
+            id2State.set(entry.getValue().id, entry.getKey());
+        }
+        Map<Set<Item>, Set<MergedItem>> mapper = new HashMap<>();
+        Map<Set<MergedItem>, StateInfo> mergedStates = new HashMap<>();
+        for (Set<Item> state : id2State) {
+            StateInfo info = states.get(state);
+            Set<MergedItem> mergedState = getMergedState(state, mapper, mergedStates);
+            for (var transition : info.transitions.entrySet()) {
+                if (transition.getValue().action == Action.REDUCE) {
+                    mergedStates.get(mergedState).transitions.put(transition.getKey(), transition.getValue());
+                    continue;
+                }
+                Set<MergedItem> mergedStateTo = getMergedState(
+                        id2State.get(transition.getValue().number),
+                        mapper,
+                        mergedStates
+                );
+                mergedStates.get(mergedState).transitions.put(
+                        transition.getKey(),
+                        new ActionNumber(Action.SHIFT, mergedStates.get(mergedStateTo).id)
+                );
+            }
+        }
+        return mergedStates;
+    }
+
+    private Set<MergedItem> getMergedState(
+            Set<Item> state,
+            Map<Set<Item>, Set<MergedItem>> mapper,
+            Map<Set<MergedItem>, StateInfo> mergedStates
+    ) {
+        if (mapper.containsKey(state)) {
+            return mapper.get(state);
+        }
+        Set<MergedItem> merged = mergeState(state);
+        mapper.put(state, merged);
+        mergedStates.putIfAbsent(merged, new StateInfo(mergedStates.size(), new HashMap<>()));
+        return merged;
+    }
+
+    private Set<MergedItem> mergeState(Set<Item> state) {
+        return state.stream().map(item -> new MergedItem(item.production, item.position)).collect(Collectors.toSet());
+    }
+
+    private Map<Set<Item>, StateInfo> getStates() {
+        Map<Set<Item>, StateInfo> states = new HashMap<>();
+        Item item = new Item(new ParserUtils.Production("start'", List.of("start")), 0, "$");
+        Set<Item> state = new HashSet<>() {{
+            add(item);
+        }};
+        closure(state);
+        states.put(state, new StateInfo(0, new HashMap<>()));
+        runState(state, states);
+        return states;
+    }
+
+    private void runState(Set<Item> state, Map<Set<Item>, StateInfo> states) {
+        Map<String, List<Item>> groped = state.stream().collect(Collectors.groupingBy(item -> {
+            if (item.position < item.production.sequence().size()) {
+                return item.production.sequence().get(item.position);
+            }
+            return "$";
+        }));
+        for (Map.Entry<String, List<Item>> transition : groped.entrySet()) {
+            if (transition.getKey().equals("$")) {
+                doReduce(states.get(state), transition.getValue());
+                continue;
+            }
+            Set<Item> newState = transition.getValue()
+                    .stream()
+                    .map(item -> new Item(item.production, item.position + 1, item.lookAhead))
+                    .collect(Collectors.toSet());
+            closure(newState);
+            if (states.containsKey(newState)) {
+                doShift(states.get(state), transition.getKey(), states.get(newState).id);
+                continue;
+            }
+            states.put(newState, new StateInfo(states.size(), new HashMap<>()));
+            doShift(states.get(state), transition.getKey(), states.get(newState).id);
+//            states.get(state).transitions.put(
+//                    transition.getKey(),
+//                    new ActionNumber(Action.SHIFT, states.get(newState).id)
+//            );
+            runState(newState, states);
+        }
+    }
+
+    private void doShift(StateInfo info, String token, int id) {
+        info.transitions.put(
+                token,
+                new ActionNumber(Action.SHIFT, id)
+        );
+    }
+
+    private void doReduce(StateInfo info, List<Item> items) {
+        for (Item item : items) {
+            int productionId = productions.get(item.production);
+            info.transitions.put(item.lookAhead, new ActionNumber(Action.REDUCE, productionId));
+        }
+    }
+
+    private void closure(Set<Item> state) {
+        while (true) {
+            boolean change = false;
+            for (Item item : state.toArray(Item[]::new)) {
+                if (item.position >= item.production.sequence().size()) {
+                    continue;
+                }
+                if (ParserUtils.isTerminal(item.production.sequence().get(item.position))) {
+                    continue;
+                }
+                String nonTerminal = item.production.sequence().get(item.position);
+                List<String> subSequence = item.production.sequence().subList(
+                        item.position + 1,
+                        item.production.sequence().size()
+                );
+                Set<String> firstSet = ParserUtils.getFirst(subSequence, first);
+                if (firstSet.contains("")) {
+                    firstSet.remove("");
+                    firstSet.add(item.lookAhead);
+                }
+                for (List<String> sequence : sequences.get(nonTerminal)) {
+                    for (String lookAhead : firstSet) {
+                        change |= state.add(new Item(new ParserUtils.Production(nonTerminal, sequence), 0, lookAhead));
+                    }
+                }
+            }
+            if (!change) {
+                break;
+            }
+        }
+    }
+
+
     private String getHeaders(List<String> tokens) {
         return tokens.stream()
                 .map(token -> String.format("%27s", token))
                 .collect(Collectors.joining("  "));
-    }
-
-    private String getTableRow(Row row, List<String> tokens) {
-        String values = tokens.stream()
-                .map(row.cells::get)
-                .map(cell -> String.format("%27s", cell))
-                .collect(Collectors.joining(", "));
-        return String.format("{ %s }", values);
     }
 
     private Map<ParserUtils.Production, Integer> getProductions(GrammaticsParser.GrammaticsContext ctx) {
@@ -198,85 +311,5 @@ public class TableGenerator implements Generator {
                     .collect(Collectors.toSet()));
         }
         return sequences;
-    }
-
-    private Map<State, Row> getStates() {
-        Map<State, Row> states = new HashMap<>();
-        Item item = new Item(new ParserUtils.Production("start'", List.of("start")), 0, new HashSet<>() {{
-            add("$");
-        }});
-        State state = new State(new HashMap<>() {{
-            put(item, item);
-        }});
-        closure(state);
-        states.put(state, new Row(new IDState(state, 0), new HashMap<>()));
-        runState(state, states);
-        return states;
-    }
-
-    private void doReduce(Row row, List<Item> items) {
-        for (Item item : items) {
-            int id = productions.get(item.production);
-            item.lookAhead.forEach(token -> row.cells.put(token, new Cell(Action.REDUCE, id)));
-        }
-    }
-
-    private void doShift(Row row, String token, int id) {
-        row.cells.put(token, new Cell(Action.SHIFT, id));
-    }
-
-    private void runState(State state, Map<State, Row> states) {
-        Map<String, List<Item>> shifts = state.items.keySet().stream().collect(Collectors.groupingBy(item -> {
-            List<String> sequence = item.production.sequence();
-            return item.position < sequence.size() ? sequence.get(item.position) : "$";
-        }));
-        for (Map.Entry<String, List<Item>> entry : shifts.entrySet()) {
-            if (entry.getKey().equals("$")) {
-                doReduce(states.get(state), entry.getValue());
-                continue;
-            }
-            Map<Item, Item> newItems = entry.getValue()
-                    .stream()
-                    .map(item -> new Item(item.production, item.position + 1, new HashSet<>(item.lookAhead)))
-                    .collect(Collectors.toMap(Function.identity(), Function.identity()));
-            State newState = new State(newItems);
-            closure(newState);
-            if (states.containsKey(newState) && !states.get(newState).idState.state.addAll(newState)) {
-                continue;
-            }
-            states.putIfAbsent(newState, new Row(new IDState(newState, states.size()), new HashMap<>()));
-            doShift(states.get(state), entry.getKey(), states.get(newState).idState.id);
-            runState(newState, states);
-        }
-    }
-
-    private void closure(State state) {
-        while (true) {
-            boolean change = false;
-            for (Item item : state.items.keySet().toArray(Item[]::new)) {
-                if (item.position >= item.production.sequence().size()) {
-                    continue;
-                }
-                if (ParserUtils.isTerminal(item.production.sequence().get(item.position))) {
-                    continue;
-                }
-                String nonTerminal = item.production.sequence().get(item.position);
-                List<String> subSequence = item.production.sequence().subList(
-                        item.position + 1,
-                        item.production.sequence().size()
-                );
-                Set<String> firstSet = ParserUtils.getFirst(subSequence, first);
-                if (firstSet.contains("")) {
-                    firstSet.remove("");
-                    firstSet.addAll(item.lookAhead);
-                }
-                for (List<String> sequence : sequences.get(nonTerminal)) {
-                    change |= state.add(new Item(new ParserUtils.Production(nonTerminal, sequence), 0, firstSet));
-                }
-            }
-            if (!change) {
-                break;
-            }
-        }
     }
 }

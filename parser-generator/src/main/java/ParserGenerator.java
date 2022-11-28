@@ -72,7 +72,7 @@ public class ParserGenerator implements Generator {
                     }
                     switch (cell.action()) {
                         case SHIFT -> {
-                            stack.add(new Item(cell.number(), new Tree(lexer.nextToken().name())));
+                            stack.add(new Item(cell.number(), new Tree(lexer.curToken().name())));
                             lexer.nextToken();
                         }
                         case REDUCE -> {

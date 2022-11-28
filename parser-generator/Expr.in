@@ -1,5 +1,9 @@
 grammar Expr;
-start : c c;
-c : C c | D;
-D : "d";
-C : "c";
+start : t | start PLUS t;
+t : f | t STAR f;
+f : NUMBER | OBRACKET start CBRACKET;
+PLUS : "\\+";
+STAR : "\\*";
+NUMBER : "[1-9]*[0-9]+";
+OBRACKET : "\\(";
+CBRACKET : "\\)";

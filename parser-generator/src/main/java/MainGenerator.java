@@ -27,5 +27,7 @@ public class MainGenerator {
         generator5.generate(ctx, genDir);
         Generator generator6 = new LexerExceptionGenerator();
         generator6.generate(ctx, genDir);
+        Generator generator7 = new EvaluableGenerator();
+        generator7.generate(ctx, genDir);
     }
 }

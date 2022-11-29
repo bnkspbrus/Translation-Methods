@@ -15,6 +15,8 @@ public class LexerGenerator implements Generator {
 
     private static final String MATCHER_FIELD = "private final Matcher matcher;";
 
+    private static final String CUR_STRING_FIELD = "private String curString;";
+
     @Override
     public void generate(GrammaticsParser.GrammaticsContext ctx, Path genDir) throws IOException {
         Path outputFile = genDir.resolve(Path.of(ctx.header().TERMINAL().getText() + "Lexer.java"));
@@ -31,6 +33,7 @@ public class LexerGenerator implements Generator {
                             getTerminals(ctx),
                             MATCHER_FIELD,
                             CUR_TOKEN_FIELD,
+                            CUR_STRING_FIELD,
                             getCharSequenceConstructor(ctx),
                             CUR_TOKEN_METHOD,
                             CUR_STRING_METHOD,
@@ -54,29 +57,30 @@ public class LexerGenerator implements Generator {
 
     private static final String CUR_STRING_METHOD = """
             public String curString() {
-                return matcher.group();
+                return curString;
             }""";
 
     private static final String GET_NEXT_TOKEN_METHOD = """
-            public Token nextToken() {
-                    while (!matcher.hitEnd()) {
-                        if (!matcher.lookingAt()) {
-                            throw new LexerException("Unexpected token");
-                        }
-                        Token nextToken = null;
-                        for (Token token : TERMINALS) {
-                            if (matcher.group(token.name()) != null) {
-                                nextToken = token;
-                                break;
-                            }
-                        }
-                        matcher.region(matcher.end(), matcher.regionEnd());
-                        if (nextToken != null) {
-                            return curToken = nextToken;
+            public void nextToken() {
+                while (matcher.regionEnd() - matcher.regionStart() > 0) {
+                    if (!matcher.lookingAt()) {
+                        throw new LexerException("Unexpected token at position " + matcher.regionStart());
+                    }
+                    Token nextToken = null;
+                    for (Token token : TERMINALS) {
+                        if ((curString = matcher.group(token.name())) != null) {
+                            nextToken = token;
+                            break;
                         }
                     }
-                    return curToken = Token.$;
-                }""";
+                    matcher.region(matcher.end(), matcher.regionEnd());
+                    if (nextToken != null) {
+                        curToken = nextToken;
+                        return;
+                    }
+                }
+                curToken = Token.$;
+            }""";
 
     private static final String CUR_TOKEN_METHOD = """
             public Token curToken() {

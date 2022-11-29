@@ -1,7 +1,8 @@
 grammar Expr;
-start : t | start PLUS t;
-t : f | t STAR f;
-f : NUMBER | OBRACKET start CBRACKET;
+@tree::members {double val;}
+start : t {$val = $t.val;} | start PLUS t {$val = $start.val + $t.val;};
+t : f {$val = $f.val;} | t STAR f {$val = $t.val * $f.val;};
+f : NUMBER {$val = Integer.parseInt($NUMBER.getText());} | OBRACKET start CBRACKET {$val = $start.val;};
 PLUS : "\\+";
 STAR : "\\*";
 NUMBER : "[1-9]*[0-9]+";

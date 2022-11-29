@@ -18,6 +18,7 @@ public class ParserGenerator implements Generator {
                 this.lexer = lexer;
             }""";
     private static final String IMPORTS = """
+            import java.util.EnumMap;
             import java.util.List;
             import java.util.ArrayList;""";
 
@@ -39,11 +40,41 @@ public class ParserGenerator implements Generator {
                             getLexerField(ctx),
                             getLexerConstructor(ctx),
                             getProductions(ctx),
+                            getActions(ctx),
                             START_METHOD
                     ).indent(4)
             );
             writer.write(parser);
         }
+    }
+
+    private String getActions(GrammaticsParser.GrammaticsContext ctx) {
+        return String.format("""
+                        private static final Evaluable[] evaluates = new Evaluable[] {
+                        %s
+                        };""",
+                ctx.ruleParser()
+                        .stream()
+                        .map(this::getProductionActions)
+                        .collect(Collectors.joining(",\n"))
+                        .indent(4)
+        );
+    }
+
+    private String getProductionActions(GrammaticsParser.RuleParserContext ctx) {
+        return ctx.alternative().stream().map(this::getAlternativeActions).collect(Collectors.joining(",\n"));
+    }
+
+    private String getAlternativeActions(GrammaticsParser.AlternativeContext ctx) {
+        if (ctx.CODE() == null) {
+            return null;
+        }
+        String code = ctx.CODE().getText().replaceAll("\\$([a-zA-Z]+)\\.", "operands.get(Token.$1).");
+        code = code.replaceAll("\\$", "result.");
+        return String.format(
+                "(result, operands) -> %s",
+                code
+        );
     }
 
     private String getLexerConstructor(GrammaticsParser.GrammaticsContext ctx) {
@@ -72,7 +103,7 @@ public class ParserGenerator implements Generator {
                     }
                     switch (cell.action()) {
                         case SHIFT -> {
-                            stack.add(new Item(cell.number(), new Tree(lexer.curToken().name())));
+                            stack.add(new Item(cell.number(), new Tree(lexer.curToken().name(), lexer.curString())));
                             lexer.nextToken();
                         }
                         case REDUCE -> {
@@ -82,9 +113,13 @@ public class ParserGenerator implements Generator {
                             Production production = productions[cell.number() - 1];
                             Token nonTerminal = production.nonTerminal;
                             Tree tree = new Tree(nonTerminal.name());
-                            for (int i = stack.size() - production.sequence.size(); i < stack.size(); i++) {
+                            EnumMap<Token, Tree> operands = new EnumMap<>(Token.class);
+                            int from = stack.size() - production.sequence.size();
+                            for (int i = from; i < stack.size(); i++) {
                                 tree.addChild(stack.get(i).tree);
+                                operands.put(production.sequence.get(i - from), stack.get(i).tree);
                             }
+                            evaluates[cell.number() - 1].evaluate(tree, operands);
                             stack = stack.subList(0, stack.size() - production.sequence.size());
                             Table.Cell shift = Table.TABLE[stack.get(stack.size() - 1).idState][nonTerminal.ordinal()];
                             stack.add(new Item(shift.number(), tree));

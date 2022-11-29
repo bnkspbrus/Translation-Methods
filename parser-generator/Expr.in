@@ -1,10 +1,16 @@
 grammar Expr;
 @tree::members {double val;}
-start : t {$val = $t.val;} | start PLUS t {$val = $start.val + $t.val;};
+start : t {$val = $t.val;} | start PLUS t {$val = $start.val + $t.val;} | start MINUS t {$val = $start.val - $t.val;};
 t : f {$val = $f.val;} | t STAR f {$val = $t.val * $f.val;};
-f : NUMBER {$val = Integer.parseInt($NUMBER.getText());} | OBRACKET start CBRACKET {$val = $start.val;};
+f : NUMBER {$val = Integer.parseInt($NUMBER.getText());} | OBRACKET start CBRACKET {$val = $start.val;} | MINUS f {$val = - $f.val;} | FUNC OBRACKET start CBRACKET { if ($FUNC.getText().equals("sin")) $val = Math.sin($start.val); else $val = 0;} | f FACTORIAL {$val = 1;
+                                                                                                                                                                                                                                                                         for (int i = 2; i <= $f.val; i++)
+                                                                                                                                                                                                                                                                             $val = $val * i;
+                                                                                                                                                                                                                                                                         };
+FACTORIAL : "!";
 PLUS : "\\+";
+MINUS : "-";
 STAR : "\\*";
+FUNC : "[a-z]+";
 NUMBER : "[1-9]*[0-9]+";
 OBRACKET : "\\(";
 CBRACKET : "\\)";

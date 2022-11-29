@@ -12,7 +12,7 @@ public class MainGenerator {
         GrammaticsParser parser = new GrammaticsParser(tokens);
         GrammaticsParser.GrammaticsContext ctx = parser.grammatics();
 //
-        Path genDir = Path.of("gen");
+        Path genDir = Path.of("calculator/src/main/java");
         Generator generator = new TableGenerator();
         generator.generate(ctx, genDir);
         Generator generator1 = new TokenGenerator();
